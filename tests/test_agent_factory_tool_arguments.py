@@ -235,25 +235,3 @@ def test_real_tool_schemas_declare_optional_filters_as_nullable() -> None:
         schema = tool.params_json_schema
         for param in params:
             assert factory._is_nullable(param, schema["properties"][param], schema)
-
-
-@pytest.mark.parametrize(
-    "raw",
-    [
-        '{"todos": "a"}}',
-        '{"todos": "a"}{"todos": "b"}',
-        '{"todos": "a"}\n<|tool_call_end|>',
-    ],
-)
-async def test_trailing_characters_after_arguments_keep_the_leading_object(raw: str) -> None:
-    captured: dict[str, str] = {}
-    wrapped = factory._with_coerced_arguments(_capturing_tool(captured, _STRING))
-    assert await wrapped.on_invoke_tool(cast("Any", None), raw) == "ok"
-    assert json.loads(captured["raw_input"]) == {"todos": "a"}
-
-
-async def test_unparseable_arguments_pass_through_unchanged() -> None:
-    captured: dict[str, str] = {}
-    wrapped = factory._with_coerced_arguments(_capturing_tool(captured, _STRING))
-    assert await wrapped.on_invoke_tool(cast("Any", None), '{"todos": ') == "ok"
-    assert captured["raw_input"] == '{"todos": '

@@ -231,18 +231,38 @@ def _coerce_argument(value: Any, spec: dict[str, Any], *, nullable: bool = False
 _QUERY_TOOL_PREFIXES = ("list_", "search_", "view_", "get_")
 
 
-def _coerce_arguments(raw_input: str, schema: dict[str, Any], *, nullish: bool = False) -> str:
-    properties = schema.get("properties")
-    if not isinstance(properties, dict) or not properties:
-        return raw_input
+def _load_arguments(raw_input: str) -> tuple[Any, bool]:
+    """Parse tool-call arguments; return ``(payload, salvaged)``.
+
+    Some routes (GLM on Ollama) emit a complete JSON object followed by stray
+    characters — a second object, an extra brace. The leading object is taken
+    and ``salvaged`` is true; anything else unparseable gives ``(None, False)``.
+    """
+    if not raw_input:
+        return None, False
     try:
-        payload = json.loads(raw_input) if raw_input else None
+        return json.loads(raw_input), False
+    except (json.JSONDecodeError, TypeError):
+        pass
+    try:
+        payload, _ = json.JSONDecoder().raw_decode(raw_input.lstrip())
     except json.JSONDecodeError:
-        return raw_input
+        return None, False
+    if not isinstance(payload, dict):
+        return None, False
+    logger.warning("Tool arguments had trailing characters; using the leading JSON object")
+    return payload, True
+
+
+def _coerce_arguments(raw_input: str, schema: dict[str, Any], *, nullish: bool = False) -> str:
+    payload, salvaged = _load_arguments(raw_input)
     if not isinstance(payload, dict):
         return raw_input
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        return json.dumps(payload, ensure_ascii=False) if salvaged else raw_input
 
-    changed = False
+    changed = salvaged
     for key, value in payload.items():
         spec = properties.get(key)
         if not isinstance(spec, dict):
@@ -436,10 +456,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
-        try:
-            parsed = json.loads(raw_input)
-        except (json.JSONDecodeError, TypeError):
-            parsed = None
+        parsed, _ = _load_arguments(raw_input)
         if isinstance(parsed, dict):
             if "shell" not in parsed:
                 parsed["shell"] = "bash"
@@ -465,10 +482,7 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
-        try:
-            parsed = json.loads(raw_input)
-        except json.JSONDecodeError:
-            parsed = None
+        parsed, _ = _load_arguments(raw_input)
         if isinstance(parsed, dict):
             if isinstance(parsed.get("chars"), str):
                 parsed["chars"] = _decode_chars_escape(parsed["chars"])

@@ -115,3 +115,21 @@ def test_function_tools_are_result_bounded() -> None:
     by_name = {t.name: t for t in agent.tools}
 
     assert getattr(by_name["think"], "_strix_bounded", False) is True
+
+
+@pytest.mark.asyncio
+async def test_wrap_exec_command_keeps_the_leading_object_of_duplicated_arguments() -> None:
+    # A streamed GLM reply on Ollama cloud repeats the tool call's arguments,
+    # which the stream concatenates: "trailing characters at line 1 column 29".
+    captured: dict[str, str] = {}
+    args = json.dumps({"cmd": "ls -la /workspace"})
+    wrapped = factory._wrap_exec_command(
+        factory._with_coerced_arguments(_capturing_exec_tool(captured))
+    )
+
+    result = await wrapped.on_invoke_tool(cast("Any", None), args + args)
+
+    assert result == "ok"
+    parsed = json.loads(captured["raw_input"])
+    assert parsed["cmd"] == "ls -la /workspace"
+    assert parsed["shell"] == "bash"
